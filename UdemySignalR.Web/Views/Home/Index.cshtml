@@ -1,0 +1,190 @@
+﻿@{
+    ViewData["Title"] = "Home Page";
+}
+
+@section Scripts{
+    <script src="~/lib/microsoft/signalr/dist/browser/signalr.min.js"></script>
+
+    <script type="text/javascript">
+        var connection = new signalR.HubConnectionBuilder().configureLogging(signalR.LogLevel.Debug).withAutomaticReconnect([1000, 1000, 3000, 3000]).withUrl("https://localhost:44367/MyHub").build(); //configureLogging + withAutomaticReconnect(custom değerler ile denedi 4 denemden sonra olmaz ise failed döner)
+
+        //functions
+        function statusShow() {
+            $("#conStatus").text(connection.connectionState); //bağlantı durumunu yazdır
+        }
+        function start() {
+            connection.start().then(() => { //start yaptık
+                $("#loading").hide(); //ilk başarılı bağlantıda loadingi gizle
+                statusShow();
+                //connection.invoke("GetNames"); //serverdaki bu metodu tetikle ardından clienttaki ReceiveNames'a subscribe ol, isimler girildikten sonra start olan client kendi ekranında ondan önce girilen isimleri görsün diye
+                connection.invoke("GetNamesByGroup"); //gruba yeni giren , gruptaki kayıtlı tüm name'leri görsün
+            }).catch((err) => { //hata alımında
+                console.log(err);
+                setTimeout(() => start(), 2000); //bağlantı hata aldığında 2sn sonra start tekrar çalışsın
+            });
+        }
+
+        statusShow();
+        start(); //bu url'e girildiği an start çalışır ve client connect olur
+
+
+
+        //bağlantı ilk kopuğunda tekrar bağlantı kurulmaya çalışılıyor
+        connection.onreconnecting(err => { //ilk kopma anında bu metod çalışır ve 4 kere tekrar reconnect olmaya çalışır
+            $("#loading").show();
+            statusShow();
+            console.log("onreconnecting: " + err);
+        });
+        //bağlantı tekrar sağlandı ise
+        connection.onreconnected(connectionId => {
+            $("#loading").hide(); //bağlantı tekrar sağlanmış loadingi gizle
+            statusShow();
+            console.log("connectionId: " + connectionId);
+        });
+        //4 kere denedikten sonra hala bağlantı yok ise bu metod döner
+        connection.onclose(() => {
+            $("#loading").hide();
+            statusShow();
+            start(); // bağlanmaya çalış
+        });
+
+        // on methods/subscribes
+        connection.on("ReceiveName", (name) => { //on ile ReceiveName'a subscribe olduk ve serverdan name buraya geldi
+            //console.log(name);
+            $("#namesList").append(`<li class="list-group-item" > ${name} </li>`);
+        });
+        connection.on("ReceiveClientCount", (clientCount) => { //on ile ReceiveClientCount'a subscribe olduk ve serverdan clientCount buraya geldi
+            $("#clientCount").text(clientCount);
+        });
+        connection.on("Notify", (teamCount) => { //on ile Notify'a subscribe olduk ve serverdan teamCount buraya geldi
+            $("#teamCount").html(`<div class="alert alert-success">${teamCount}</div>`); // `` arasında rahat şekilde tüm karakterler kullanılabilir artık "" gibi
+        });
+        connection.on("Error", (errorText) => { //on ile Error'a subscribe olduk ve serverdan errorText buraya geldi. sadece istek yapanda çalışacak caller ile
+            alert(errorText);
+        });
+        connection.on("ReceiveNames", (names) => { //on ile ReceiveNames'a subscribe olduk ve serverdan names buraya geldi.
+            $("#namesList").empty(); //önce listeyi boşalt
+
+            names.forEach((item, index) => { //names lsitindeki tüm name'leri dön
+                $("#namesList").append(`<li class="list-group-item" > ${item} </li>`);
+            });
+        });
+        connection.on("ReceiveMessageByGroup", (name, teamId) => {
+            let listName;
+
+            if (teamId == 1) {
+                listName = "ATeamList";
+            }
+            else {
+                listName = "BTeamList";
+            }
+
+
+            $(`#${listName}`).append(`<li class="list-group-item">${name}</li>`);
+        });
+        connection.on("ReceiveNamesByGroup", (teams) => { //takımlardaki tüm name'leri dön
+            teams.forEach((team, index) => {
+                let listName;
+
+                if (team.teamId == 1) {//teamId teams objesinin için
+                    listName = "ATeamList";
+                }
+                else {
+                    listName = "BTeamList";
+                }
+
+                team.users.forEach((user, index2) => {
+                    $(`#${listName}`).append(`<li class="list-group-item">${user.name}</li>`);
+                });
+            });
+        });
+        connection.on("ReceiveProduct", (product) => {
+            console.log(product);
+        });
+
+        //clicks
+        $("input[type=radio]").change(() => {
+            let value = $(`input[type=radio]:checked`).val();
+            if (value == "TeamA") {
+                connection.invoke("AddToGroup", value); //bu gruba üye ol
+                connection.invoke("RemoveToGroup", "TeamB") //bu grupta isen çık
+            }
+            else {
+                connection.invoke("AddToGroup", value); //bu gruba üye ol
+                connection.invoke("RemoveToGroup", "TeamA") //bu grupta isen çık
+            }
+        });
+        $("#btnNameSave").click(() => {
+            connection.invoke("SendName", $("#txtName").val()).catch((err) => {  //invoke ile server tarafındaki metodu çağırır
+                console.log(err);
+            });
+        });
+        $("#btnNameTeam").click(() => {
+            let name = $("#txtName").val();
+            let teamName = $("input[type=radio]:checked").val();
+            if (teamName == null) { //takım seçilmeden isim girilip kaydedilmesini engeller
+                alert("Takım seçiniz");
+                return;
+            }
+            connection.invoke("SendNameByGroup", name, teamName).catch((err) => { //gruba client kaydetme
+                console.log(err);
+            });
+        });
+        $("#btnProduct").click(() => {
+            let product = { "Id": 1, "Name": "Kalem", "Price": 100, "Stock": 200 } //classa ait json data oluşturduk
+            connection.invoke("SendProduct", product); //hub metoda fdatayı gönderdk, clientlarda hubdaki diğerine subscribe olacak
+        });
+
+    </script>
+}
+
+<div class="row">
+    <div class="col-md-8 offset-2">
+        <input class="form-control" type="text" id="txtName" />
+        <hr />
+        <button class="btn btn-primary" id="btnNameSave">İsim Kaydet</button>
+        <button class="btn btn-warning" id="btnNameTeam">İsim Kaydet (Takıma)</button>
+        <button class="btn btn-danger" id="btnProduct">Ürün Gönder</button>
+
+
+        <div class="alert alert-info mt-2">
+            <div class="float-left">
+                Bağlantı Durumu: <strong id="conStatus"></strong> | Client Sayısı: <strong id="clientCount"></strong>
+            </div>
+            <div class="float-right">
+                <div class="spinner-border" role="status" id="loading">
+                    <span class="sr-only">Loading...</span>
+                </div>
+            </div>
+            <div class="clearfix"></div>
+        </div>
+        <div id="teamCount"></div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8 offset-md-2">
+        <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" name="TeamGroup" value="TeamA" />
+            <label class="form-check-label">A Takımı</label>
+        </div>
+        <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" name="TeamGroup" value="TeamB" />
+            <label class="form-check-label">B Takımı</label>
+        </div>
+    </div>
+
+    <div class="col-md-8 offset-2">
+        <div class="row">
+            <div class="col-md-6">
+                <h2>A Takımı</h2>
+                <ul class="list-group" id="ATeamList"></ul>
+            </div>
+            <div class="col-md-6">
+                <h2>B Takımı</h2>
+                <ul class="list-group" id="BTeamList"></ul>
+            </div>
+        </div>
+
+    </div>
+</div>
